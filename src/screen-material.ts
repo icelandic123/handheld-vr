@@ -15,6 +15,8 @@ export function createScreenMaterial(shadow: Texture, target: Texture, texel: Ve
       uMatch: { value: 0 },
       uAlive: { value: 0 },
       uSoft: { value: 1.6 },
+      uLamp: { value: 1 },
+      uCurtain: { value: 0 },
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -32,6 +34,8 @@ export function createScreenMaterial(shadow: Texture, target: Texture, texel: Ve
       uniform float uMatch;
       uniform float uAlive;
       uniform float uSoft;
+      uniform float uLamp;
+      uniform float uCurtain;
       varying vec2 vUv;
 
       float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -60,7 +64,7 @@ export function createScreenMaterial(shadow: Texture, target: Texture, texel: Ve
         c.x *= 1.5;
         float hot = exp(-dot(c, c) * 2.2);
         float fibre = noise(vUv * vec2(180.0, 120.0)) * 0.05 + noise(vUv * vec2(18.0, 9.0)) * 0.06;
-        vec3 paper = vec3(1.0, 0.82, 0.55) * (0.28 + 0.95 * hot) * flicker;
+        vec3 paper = vec3(1.0, 0.82, 0.55) * (0.28 + 0.95 * hot) * flicker * mix(0.22, 1.0, uLamp);
         paper *= 1.0 - fibre;
 
         // Target silhouette: faint fill + soft outline (ink wash).
@@ -73,8 +77,7 @@ export function createScreenMaterial(shadow: Texture, target: Texture, texel: Ve
         // Live shadow with soft penumbra.
         float s = blur(uShadow, vUv, uSoft);
         float shadowAmt = s * 0.9;
-        // Matching glow: where shadow sits on the target, edges warm toward gold.
-        float overlap = s * t;
+        // Matching glow: as the score rises, the target's outline warms toward gold.
         col = mix(col, vec3(0.06, 0.035, 0.03) * (0.6 + hot), shadowAmt);
         col += vec3(1.0, 0.65, 0.2) * outline * uMatch * 0.55 * uTargetAlpha;
 
@@ -86,7 +89,16 @@ export function createScreenMaterial(shadow: Texture, target: Texture, texel: Ve
         vec2 e = min(vUv, 1.0 - vUv);
         float vig = smoothstep(0.0, 0.06, min(e.x * 1.5, e.y));
         col *= 0.55 + 0.45 * vig;
-        gl_FragColor = vec4(col + overlap * 0.0, 1.0);
+        // Velvet stage curtains drawn from both sides, plus a fixed valance.
+        float closeW = uCurtain * 0.52;
+        float edgeL = vUv.x - closeW;
+        float edgeR = (1.0 - vUv.x) - closeW;
+        float inCurtain = step(edgeL, 0.0) + step(edgeR, 0.0);
+        float valance = step(0.955, vUv.y);
+        float folds = 0.55 + 0.45 * sin(vUv.x * 95.0 + sin(vUv.y * 6.0) * 1.5);
+        vec3 velvet = vec3(0.42, 0.05, 0.06) * folds * (0.35 + 0.75 * hot);
+        col = mix(col, velvet, clamp(inCurtain + valance, 0.0, 1.0));
+        gl_FragColor = vec4(col, 1.0);
         #include <colorspace_fragment>
       }
     `,

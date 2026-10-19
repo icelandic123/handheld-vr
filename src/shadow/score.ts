@@ -53,6 +53,10 @@ export class SilhouetteScorer {
   private tCx = 0;
   private tCy = 0;
   private tArea = 0;
+  private tMinX = 0;
+  private tMaxX = 0;
+  private tMinY = 0;
+  private tMaxY = 0;
   private opts: ScoreOptions;
 
   constructor(w: number, h: number, opts: Partial<ScoreOptions> = {}) {
@@ -89,15 +93,27 @@ export class SilhouetteScorer {
     let sx = 0;
     let sy = 0;
     let a = 0;
+    let minX = w;
+    let minY = h;
+    let maxX = -1;
+    let maxY = -1;
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         if (this.target[y * w + x]) {
           sx += x;
           sy += y;
           a++;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
         }
       }
     }
+    this.tMinX = maxX < 0 ? 0 : minX;
+    this.tMaxX = maxX < 0 ? 0 : maxX;
+    this.tMinY = maxY < 0 ? 0 : minY;
+    this.tMaxY = maxY < 0 ? 0 : maxY;
     this.tArea = a;
     this.tCx = a ? sx / a : w / 2;
     this.tCy = a ? sy / a : h / 2;
@@ -114,6 +130,10 @@ export class SilhouetteScorer {
     let sx = 0;
     let sy = 0;
     let a = 0;
+    let minX = w;
+    let minY = h;
+    let maxX = -1;
+    let maxY = -1;
     for (let y = 0; y < h; y++) {
       const row = y * w;
       for (let x = 0; x < w; x++) {
@@ -121,6 +141,10 @@ export class SilhouetteScorer {
           sx += x;
           sy += y;
           a++;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
         }
       }
     }
@@ -146,42 +170,52 @@ export class SilhouetteScorer {
     res.dy = oy - cy;
     res.scale = scale;
 
+    // Work only inside the union of the aligned shadow's and the target's
+    // bounding boxes (plus the tolerance); everything outside is empty.
+    const rad = Math.max(0, Math.round(this.opts.tolerancePx));
+    const pad = rad + 2;
+    const x0 = Math.max(0, Math.min(Math.floor((minX - cx) * scale + ox), this.tMinX) - pad);
+    const x1 = Math.min(w - 1, Math.max(Math.ceil((maxX - cx) * scale + ox), this.tMaxX) + pad);
+    const y0 = Math.max(0, Math.min(Math.floor((minY - cy) * scale + oy), this.tMinY) - pad);
+    const y1 = Math.min(h - 1, Math.max(Math.ceil((maxY - cy) * scale + oy), this.tMaxY) + pad);
+
     // Inverse-map each destination pixel to the source (nearest neighbour).
     const al = this.aligned;
     const inv = 1 / scale;
     let alignedArea = 0;
-    for (let y = 0; y < h; y++) {
-      const syf = (y - oy) * inv + cy;
-      const syi = Math.round(syf);
+    for (let y = y0; y <= y1; y++) {
+      const syi = Math.round((y - oy) * inv + cy);
       const inY = syi >= 0 && syi < h;
-      for (let x = 0; x < w; x++) {
+      const row = y * w;
+      for (let x = x0; x <= x1; x++) {
         let v = 0;
         if (inY) {
           const sxi = Math.round((x - ox) * inv + cx);
           if (sxi >= 0 && sxi < w && pixels[(syi * w + sxi) * stride] > 127) v = 1;
         }
-        al[y * w + x] = v;
+        al[row + x] = v;
         alignedArea += v;
       }
     }
 
-    const rad = Math.max(0, Math.round(this.opts.tolerancePx));
-    morph(al, this.alignedDilated, this.scratch, w, h, rad, true);
+    dilateRegion(al, this.alignedDilated, this.scratch, w, x0, y0, x1, y1, rad);
     let inter = 0;
     let union = 0;
     let insideDilated = 0;
     let covered = 0;
-    const n = w * h;
     const t = this.target;
     const td = this.targetDilated;
     const ad = this.alignedDilated;
-    for (let i = 0; i < n; i++) {
-      const s = al[i];
-      const tv = t[i];
-      inter += s & tv;
-      union += s | tv;
-      insideDilated += s & td[i];
-      covered += tv & ad[i];
+    for (let y = y0; y <= y1; y++) {
+      const row = y * w;
+      for (let i = row + x0, e = row + x1; i <= e; i++) {
+        const sv = al[i];
+        const tv = t[i];
+        inter += sv & tv;
+        union += sv | tv;
+        insideDilated += sv & td[i];
+        covered += tv & ad[i];
+      }
     }
     res.iou = union ? inter / union : 0;
     res.precision = alignedArea ? insideDilated / alignedArea : 0;
@@ -223,6 +257,43 @@ function morph(src: Uint8Array, dst: Uint8Array, tmp: Uint8Array, w: number, h: 
         const s = yy >= 0 && yy < h ? tmp[yy * w + x] : 0;
         if (dilate ? s : !s) {
           v = dilate ? 1 : 0;
+          break;
+        }
+      }
+      dst[y * w + x] = v;
+    }
+  }
+}
+
+/** Dilation restricted to the inclusive region [x0..x1] x [y0..y1]. */
+function dilateRegion(src: Uint8Array, dst: Uint8Array, tmp: Uint8Array, w: number, x0: number, y0: number, x1: number, y1: number, r: number): void {
+  if (r <= 0) {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) dst[y * w + x] = src[y * w + x];
+    return;
+  }
+  for (let y = y0; y <= y1; y++) {
+    const row = y * w;
+    for (let x = x0; x <= x1; x++) {
+      let v = 0;
+      const a = Math.max(x0, x - r);
+      const b = Math.min(x1, x + r);
+      for (let k = a; k <= b; k++) {
+        if (src[row + k]) {
+          v = 1;
+          break;
+        }
+      }
+      tmp[row + x] = v;
+    }
+  }
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      let v = 0;
+      const a = Math.max(y0, y - r);
+      const b = Math.min(y1, y + r);
+      for (let k = a; k <= b; k++) {
+        if (tmp[k * w + x]) {
+          v = 1;
           break;
         }
       }

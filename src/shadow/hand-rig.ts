@@ -184,3 +184,54 @@ function toJointRecord(mats: Float32Array, radii: Float32Array): Record<string, 
   });
   return rec;
 }
+
+/** Joint chain used to measure hand size (wrist through middle fingertip). */
+export const SIZE_CHAIN = [0, 10, 11, 12, 13, 14];
+
+/** Sum of bone lengths along SIZE_CHAIN for joint positions. Curl-invariant. */
+export function chainLength(positions: ArrayLike<{ distanceTo(v: unknown): number }>): number {
+  let len = 0;
+  for (let i = 1; i < SIZE_CHAIN.length; i++) len += positions[SIZE_CHAIN[i]].distanceTo(positions[SIZE_CHAIN[i - 1]]);
+  return len;
+}
+
+/** Rest hand size along SIZE_CHAIN (metres). */
+export const REST_CHAIN_LENGTH = (() => {
+  const p = REST_JOINT_MATRICES.map((a) => new Vector3().setFromMatrixPosition(new Matrix4().fromArray(a)));
+  return chainLength(p);
+})();
+
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const lerpCurl = (a: FingerCurl, b: FingerCurl, t: number): FingerCurl => ({
+  mcp: lerp(a.mcp, b.mcp, t),
+  pip: lerp(a.pip, b.pip, t),
+  dip: lerp(a.dip, b.dip, t),
+  spread: lerp(a.spread ?? 0, b.spread ?? 0, t),
+});
+
+/** Blend two hand shapes (joint angles) — used to animate demo hands. */
+export function lerpShape(a: HandShape, b: HandShape, t: number): HandShape {
+  return {
+    thumb: {
+      cmcFlex: lerp(a.thumb.cmcFlex ?? 0, b.thumb.cmcFlex ?? 0, t),
+      cmcAbd: lerp(a.thumb.cmcAbd ?? 0, b.thumb.cmcAbd ?? 0, t),
+      cmcTwist: lerp(a.thumb.cmcTwist ?? 0, b.thumb.cmcTwist ?? 0, t),
+      mcp: lerp(a.thumb.mcp, b.thumb.mcp, t),
+      ip: lerp(a.thumb.ip, b.thumb.ip, t),
+    },
+    index: lerpCurl(a.index, b.index, t),
+    middle: lerpCurl(a.middle, b.middle, t),
+    ring: lerpCurl(a.ring, b.ring, t),
+    pinky: lerpCurl(a.pinky, b.pinky, t),
+  };
+}
+
+/** Blend two placements (offset and pointing directions). */
+export function lerpPlaced(a: PlacedHand, b: PlacedHand, t: number, shape: HandShape): PlacedHand {
+  const v = (x: [number, number, number], y: [number, number, number]): [number, number, number] => [
+    lerp(x[0], y[0], t),
+    lerp(x[1], y[1], t),
+    lerp(x[2], y[2], t),
+  ];
+  return { shape, offset: v(a.offset, b.offset), point: v(a.point, b.point), back: v(a.back, b.back) };
+}

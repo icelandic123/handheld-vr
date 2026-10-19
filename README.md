@@ -1,64 +1,104 @@
-# Shadowplay (working title)
+# The Little Lamp Theatre
 
-A shadow-puppet theatre for your hands. Built with Meta's Immersive Web SDK
-(IWSDK) for WebXR on Meta Quest, for hands and seated play.
+A hand-shadow puppet play for WebXR on Meta Quest. Sit at a small table, raise
+your hands into the lamplight, and shape a dog, a rabbit and a bird on a glowing
+paper screen. Get the shape right and the shadow comes alive.
 
-You sit at a small table with a warm lamp. Your tracked hands cast live
-shadows onto a paper screen. Each scene shows a faint silhouette (open hand,
-dog, rabbit, bird…). Shape your hands so your shadow fills it, and the puppet
-comes alive.
+**Play:** https://icelandic123.github.io/handheld-vr/ (open it in Meta Quest
+Browser). On a laptop the same link plays the show in an emulated headset.
+
+Entry for the Meta VR Start Developer Competition 2026. Built with Meta's
+Immersive Web SDK (IWSDK).
+
+## How to play
+
+- Seated, hands only. No controllers are needed.
+- **Prologue:** hold up an open hand to wake the lamp.
+- **I. The Dog Who Lost His Bark:** hand sideways, thumb up for an ear, little
+  finger dropped for a jaw.
+- **II. The Rabbit Who Wanted the Moon:** two fingers up for ears, the rest
+  curled under the thumb.
+- **III. The Bird Who Gave a Ride:** cross your wrists, hook your thumbs, spread
+  your fingers as wings.
+- **Curtain call:** the cast bows. Wave goodnight to close the curtain.
+
+A faint outline shows each target. Hold the shape for half a second. If you get
+stuck, poke the brass bell on the right of the table to skip a scene. The bell on
+the left leaves the theatre.
+
+**On a laptop:** "Watch the play" runs the whole show with emulated hands. "Try
+it with emulated hands" lets you press 1 to 4 to snap the hands into each shape,
+0 to rest them, N to skip and Esc to leave. Add `?emulator=1` to force the
+emulator, or `?emulator=0` to turn it off.
 
 ## How it works
 
-- **Hands → capsule proxy** (`src/shadow/hand-proxy.ts`): the 25 WebXR joint
-  poses + radii drive instanced spheres/cylinders, a palm fan and an IK forearm.
-  No hand model is downloaded.
-- **Shadow = projection from the lamp** (`src/shadow/shadow-light.ts`): for a
-  point light and a flat screen, a shadow is the perspective projection of the
-  casters from the light onto that plane. We render the casters from the lamp
-  with an off-axis frustum whose image plane *is* the screen, into a 384x256
-  render target. The screen shader displays it with a soft penumbra. A 128x85
-  copy is read back asynchronously (PBO + fence) for scoring. What you see is
-  exactly what is scored. (`?native=1` switches to a three.js spot-light shadow
-  map instead, for comparison.)
+- **Hands become capsules** (`src/shadow/hand-proxy.ts`). The 25 WebXR joint
+  poses and radii drive instanced spheres and cylinders, a palm fan and an IK
+  forearm. The forearm's shadow fades out just past the wrist and is never
+  scored, so the arm can't fill a target.
+- **A shadow is a projection from the lamp** (`src/shadow/shadow-light.ts`). For
+  a point light and a flat screen, a shadow is the perspective projection of the
+  hands from the light onto that plane. The hands are rendered from the lamp
+  with an off-axis frustum whose image plane is the screen. The screen shader
+  shows the result with a soft penumbra. A 128x85 copy is read back
+  asynchronously for scoring, so what you see is what is scored.
 - **Targets come from a posed ghost hand** (`src/shadow/hand-rig.ts`,
-  `src/shadow/poses.ts`): puppet shapes are joint angles on an FK rig built
-  from a real tracked-hand skeleton. Each one is rendered through the same
-  pipeline to make the mask, so every target can be reached by a hand.
-- **Scoring** (`src/shadow/score.ts`): centroid and scale alignment, then a
-  symmetric tolerant F1 (shadow inside dilated target, target covered by
-  dilated shadow). Tolerance and threshold are tunable.
-- **Sound** is synthesised with WebAudio (`src/audio.ts`). There are no asset
-  files.
+  `src/shadow/poses.ts`). Each puppet is a set of joint angles on a
+  forward-kinematics rig built from a real tracked-hand skeleton. It is rendered
+  through the same pipeline at the player's measured hand size, so every target
+  can be reached by a real hand.
+- **Scoring** (`src/shadow/score.ts`) aligns centroid and scale, then computes a
+  symmetric tolerant F1: the shadow inside the target and the target covered by
+  the shadow. It costs about 0.1 ms per call. A pose passes when it scores at
+  least 0.85 *and* beats every look-alike puppet by 0.03, so an open hand can't
+  pass as the rabbit.
+- **Sound** is synthesised with WebAudio (`src/audio.ts`): bark, boing, chirp,
+  applause and the curtain. There are no audio files.
+- **Laptop fallback** (`src/emulator.ts`, `src/landing.ts`, `src/autopilot.ts`).
+  When the browser reports no immersive-vr support, the IWER emulator is loaded
+  on demand and an autopilot performs the show. On a headset the emulator is
+  never loaded.
 
-## Run
+## Run locally
 
 ```sh
-npm install
-npm run dev            # IWSDK-managed dev server + emulator browser
-# or, without the managed browser:
-IWSDK_DEV_OPEN=false npx vite --port 8081
+npm ci
+IWSDK_DEV_OPEN=false npx vite --port 8081   # https://localhost:8081/
+npm run build                               # dist/ works from any subpath
 ```
 
-Headless proof run (IWER emulator driven by Playwright):
+The headless proof runs the IWER emulator under Playwright, poses every puppet
+and records scores, cross-scores and timings:
 
 ```sh
 PW_DIR=<dir with node_modules/playwright> CHROME=<chromium path> \
   node tools/xr-proof.mjs https://localhost:8081/ <outDir>
-node tools/eval-scorer.mjs <outDir>/results.json   # offline scorer evaluation
+node tools/eval-scorer.mjs <outDir>/results.json
 ```
 
-Debug hooks live on `window.__shadowplay` (state, setBeat, setTolerance,
-setThreshold, emulatorPose…).
+Debug hooks live on `window.__shadowplay`.
 
-## Deploy (GitHub Pages project site)
+## Deploy
 
-`vite.config.ts` uses `base: './'`, so `npm run build` output works from
-`https://<user>.github.io/handheld-vr/` (verified locally from a `/handheld-vr/`
-subpath). Publish `dist/` with `npx gh-pages -d dist --dotfiles`
-(`public/.nojekyll` is included).
+`.github/workflows/pages.yml` builds on every push to `main` and publishes
+`dist/` with GitHub Pages. To use it, set the repository's Pages source to
+"GitHub Actions".
 
-## Credits
+## How it was built (AI disclosure)
 
-Rest hand skeleton in `src/shadow/rest-hand.ts` is derived from IWER's relaxed
-hand pose (MIT, Meta Platforms). Everything else is procedural or our own.
+This project was built end to end by Claude Code (Anthropic's coding agent) for
+bladoi (icelandic123). That covers the code, the puppet poses, the story text,
+the synthesised sound and the tests. bladoi set the brief, made the decisions
+and reviewed the results.
+
+## Credits and licence
+
+MIT, see `LICENSE`.
+
+- The rest-hand skeleton in `src/shadow/rest-hand.ts` is derived from the
+  relaxed hand pose in IWER (MIT, Meta Platforms).
+- The hand models in `public/hands/generic-hand/` come from
+  `@webxr-input-profiles/assets` (MIT, Amazon). See
+  `public/hands/LICENSE-webxr-input-profiles.md`.
+- Everything else (the stage, shadows, puppets and sound) is procedural.

@@ -64,8 +64,9 @@ const setHands = async (id, jitter = 0, hideOthers = true) =>
       const sym = Object.getOwnPropertySymbols(hand).find((s) => s.description === '@iwer/xr-hand-input');
       const p = placement[h];
       if (p) {
-        hand[sym].poses['puppet'] = p.pose;
-        hand.poseId = 'puppet';
+        // IWER shares one pose table between both hands: one slot per hand.
+        hand[sym].poses[`puppet-${h}`] = p.pose;
+        hand.poseId = `puppet-${h}`;
         hand.position.set(...p.position);
         hand.quaternion.set(...p.quaternion);
         hand.connected = true;

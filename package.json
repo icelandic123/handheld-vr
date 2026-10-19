@@ -15,15 +15,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@iwer/devui": "2.6.0",
     "@iwsdk/core": "1.0.1",
     "@pmndrs/uikit": "^1.0.74",
     "@pmndrs/uikit-horizon": "^1.0.74",
     "@pmndrs/uikit-lucide": "^1.0.74",
+    "iwer": "2.6.0",
     "three": "npm:super-three@0.181.0"
   },
   "devDependencies": {
-    "@iwsdk/reference": "1.0.1",
     "@iwsdk/cli": "1.0.1",
+    "@iwsdk/reference": "1.0.1",
     "@iwsdk/vite-plugin-dev": "1.0.1",
     "@meta-quest/metavr": "^1.8.1",
     "@types/three": "^0.181.0",

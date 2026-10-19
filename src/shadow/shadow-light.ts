@@ -120,6 +120,29 @@ export class ShadowLight {
     }
   }
 
+  /** A render target sized like the scoring grid (for per-puppet masks). */
+  makeScoreRT(): WebGLRenderTarget {
+    return new WebGLRenderTarget(this.scoreW, this.scoreH, {
+      depthBuffer: true,
+      minFilter: NearestFilter,
+      magFilter: NearestFilter,
+      generateMipmaps: false,
+    });
+  }
+
+  /** Render the ghost casters' scored shadow (no forearm) into `rt`. */
+  renderGhostScore(renderer: WebGLRenderer, rt: WebGLRenderTarget): void {
+    this.cam.layers.set(LAYER_SCORED);
+    this.renderTo(renderer, this.ghostScene, rt);
+  }
+
+  /** Render only the display version of the ghost (for animated puppets). */
+  renderGhostDisplay(renderer: WebGLRenderer): void {
+    this.cam.layers.set(LAYER_SCORED);
+    this.cam.layers.enable(LAYER_DISPLAY_ONLY);
+    this.renderTo(renderer, this.ghostScene, this.targetDisplayRT);
+  }
+
   renderGhost(renderer: WebGLRenderer): void {
     this.cam.layers.set(LAYER_SCORED);
     this.cam.layers.enable(LAYER_DISPLAY_ONLY);

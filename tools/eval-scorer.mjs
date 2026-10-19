@@ -42,3 +42,26 @@ const rgba = new Uint8Array(w * h * 4); for (let i = 0; i < w * h; i++) rgba[i *
 for (let i = 0; i < 200; i++) sc.score(rgba, 4);
 const N = 2000; const s0 = performance.now(); for (let i = 0; i < N; i++) sc.score(rgba, 4); const per = (performance.now() - s0) / N;
 console.log(`\nscore() on ${w}x${h} RGBA: ${(per * 1000).toFixed(1)} us/call (Node, x86)`);
+
+// Pass rule used in the game: score >= threshold AND score beats every other
+// puppet's silhouette (the "runner-up") by at least `margin`.
+const scorers = Object.fromEntries(ids.map((id) => { const s = new SilhouetteScorer(w, h, { tolerancePx: 1 }); s.setTarget(toArr(targets[id]), 1); return [id, s]; }));
+for (const [threshold, margin] of [[0.85, 0], [0.85, 0.03], [0.85, 0.05], [0.8, 0.05]]) {
+  let tp = 0, tn = 0, fp = 0, fn = 0;
+  const fpList = [];
+  for (const tid of ids) {
+    for (const src of ids) {
+      for (const a of attempts[src]) {
+        if (a.deg > 20) continue;
+        const m = toArr(a.mask);
+        const own = scorers[tid].score(m, 1).score;
+        let runner = 0;
+        for (const o of ids) if (o !== tid) runner = Math.max(runner, scorers[o].score(m, 1).score);
+        const pass = own >= threshold && own - runner >= margin;
+        if (src === tid) pass ? tp++ : fn++;
+        else if (pass) { fp++; fpList.push(`${src}->${tid}`); } else tn++;
+      }
+    }
+  }
+  console.log(`rule thr=${threshold} margin=${margin}: correct poses accepted ${tp}/${tp + fn}, wrong poses accepted ${fp}/${fp + tn} ${fpList.slice(0, 6).join(' ')}`);
+}

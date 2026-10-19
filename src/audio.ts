@@ -82,6 +82,96 @@ export class TheatreAudio {
     src.start();
   }
 
+  /** Dog bark: a short noisy formant burst with a falling pitch, twice. */
+  bark(): void {
+    for (const d of [0, 0.28]) {
+      this.sweep(420, 170, 0.16, 'sawtooth', 0.13, d, 900);
+      this.noiseBurst(0.12, 0.08, 1200, d);
+    }
+  }
+
+  /** Rabbit hop: springy upward sweep. */
+  boing(): void {
+    this.sweep(180, 720, 0.25, 'sine', 0.12, 0);
+    this.sweep(240, 900, 0.22, 'sine', 0.08, 0.32);
+  }
+
+  /** Bird: a few quick chirps. */
+  chirp(): void {
+    for (let i = 0; i < 5; i++) this.sweep(2200 + i * 120, 3400, 0.07, 'sine', 0.06, i * 0.11);
+  }
+
+  /** Lamp waking: warm chord swell plus a soft click. */
+  lampOn(): void {
+    this.noiseBurst(0.03, 0.15, 3000, 0);
+    [261.63, 329.63, 392.0].forEach((f, i) => this.tone(f, 0.07, 2.2, 'sine', 0.05 + i * 0.04));
+  }
+
+  /** Applause: many short noise claps with a swelling envelope. */
+  applause(seconds = 3.5): void {
+    for (let i = 0; i < seconds * 35; i++) {
+      const t = Math.random() * seconds;
+      const env = Math.sin((Math.PI * t) / seconds);
+      this.noiseBurst(0.025, 0.05 * env + 0.01, 1500 + Math.random() * 2500, t);
+    }
+  }
+
+  /** Curtain: long low rustle. */
+  curtain(): void {
+    this.noiseBurst(1.4, 0.18, 700, 0);
+  }
+
+  private sweep(f0: number, f1: number, dur: number, type: OscillatorType, gain: number, delay: number, lowpass = 0): void {
+    if (!this.ctx || !this.master) return;
+    const ctx = this.ctx;
+    const t0 = ctx.currentTime + delay;
+    const osc = ctx.createOscillator();
+    osc.type = type;
+    osc.frequency.setValueAtTime(f0, t0);
+    osc.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    let node: AudioNode = osc;
+    if (lowpass > 0) {
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = lowpass;
+      osc.connect(lp);
+      node = lp;
+    }
+    node.connect(g).connect(this.master);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.05);
+  }
+
+  private noiseBuffer: AudioBuffer | null = null;
+  private noiseBurst(dur: number, gain: number, bandHz: number, delay: number): void {
+    if (!this.ctx || !this.master) return;
+    const ctx = this.ctx;
+    if (!this.noiseBuffer) {
+      const len = ctx.sampleRate * 2;
+      this.noiseBuffer = ctx.createBuffer(1, len, ctx.sampleRate);
+      const d = this.noiseBuffer.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    }
+    const t0 = ctx.currentTime + delay;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = bandHz;
+    bp.Q.value = 0.8;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + Math.min(0.01, dur / 4));
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(bp).connect(g).connect(this.master);
+    src.start(t0, Math.random());
+    src.stop(t0 + dur + 0.02);
+  }
+
   private tone(freq: number, gain: number, dur: number, type: OscillatorType, delay = 0): void {
     if (!this.ctx || !this.master) return;
     const ctx = this.ctx;

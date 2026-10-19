@@ -1,5 +1,10 @@
 import {
+  AddEquation,
   BufferAttribute,
+  CustomBlending,
+  MaxEquation,
+  OneFactor,
+  ShaderMaterial,
   BufferGeometry,
   CylinderGeometry,
   DynamicDrawUsage,
@@ -20,6 +25,41 @@ export const LAYER_SCORED = 1;
 export const LAYER_DISPLAY_ONLY = 2;
 
 const UP = new Vector3(0, 1, 0);
+
+/**
+ * Forearm caster: coverage fades from 1 at the wrist to 0 about a third of the
+ * way to the elbow, and is MAX-blended so it never darkens the hand. This keeps
+ * the arm from throwing a giant wedge across the screen (a real lamp's falloff
+ * looks much the same) while the shadow still reads as "attached to an arm".
+ */
+let forearmCasterMaterial: ShaderMaterial | null = null;
+function getForearmCasterMaterial(): ShaderMaterial {
+  if (forearmCasterMaterial) return forearmCasterMaterial;
+  forearmCasterMaterial = new ShaderMaterial({
+    vertexShader: /* glsl */ `
+      varying float vAlong;
+      void main() {
+        vAlong = uv.y; // fraction of the way from wrist (0) to elbow (1)
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying float vAlong;
+      void main() {
+        float f = 1.0 - smoothstep(0.05, 0.4, vAlong);
+        gl_FragColor = vec4(vec3(f), 1.0);
+      }
+    `,
+    depthTest: false,
+    depthWrite: false,
+    blending: CustomBlending,
+    blendEquation: MaxEquation,
+    blendSrc: OneFactor,
+    blendDst: OneFactor,
+    blendEquationAlpha: AddEquation,
+  });
+  return forearmCasterMaterial;
+}
 
 /**
  * Procedural "capsule" hand built from the 25 WebXR joint poses and radii.
@@ -87,7 +127,8 @@ export class HandProxy {
     const casterPalm = new Mesh(this.palmGeometry, casterMaterial);
     const palm = new Mesh(this.palmGeometry, vm);
 
-    this.casterForearm = new Mesh(cylGeo, casterMaterial);
+    this.casterForearm = new Mesh(cylGeo, getForearmCasterMaterial());
+    this.casterForearm.renderOrder = 10;
     this.forearm = new Mesh(cylGeo, vm);
     this.casterForearm.matrixAutoUpdate = false;
     this.forearm.matrixAutoUpdate = false;

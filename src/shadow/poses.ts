@@ -85,3 +85,22 @@ export const PUPPETS: PuppetPose[] = [
 ];
 
 export const STRAIGHT = straight;
+
+/** A relaxed hand resting just above the table (used by the demo autopilot). */
+export const RESTING: HandShape = {
+  thumb: { cmcAbd: 5, mcp: 10, ip: 10 },
+  index: curl(20, 25, 10, 4),
+  middle: curl(22, 28, 10, 0),
+  ring: curl(25, 30, 12, -4),
+  pinky: curl(28, 32, 12, -8),
+};
+export const REST_PLACEMENT: Record<'left' | 'right', PlacedHand> = {
+  left: { shape: RESTING, offset: [-0.2, -0.13, 0.16], point: [0.25, 0, -1], back: [0, 1, 0] },
+  right: { shape: RESTING, offset: [0.2, -0.13, 0.16], point: [-0.25, 0, -1], back: [0, 1, 0] },
+};
+
+export function puppetById(id: string): PuppetPose {
+  const p = PUPPETS.find((x) => x.id === id);
+  if (!p) throw new Error(`Unknown puppet ${id}`);
+  return p;
+}
