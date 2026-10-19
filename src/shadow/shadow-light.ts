@@ -57,7 +57,8 @@ export class ShadowLight {
 
   readonly timings: ShadowTimings = { displayMs: 0, scoreMs: 0, readbackMs: 0, readbackFrames: 0, scoreCpuMs: 0 };
 
-  private spec: ScreenSpec;
+  /** The screen the projector is currently configured for. */
+  spec: ScreenSpec;
   private readonly lightLocal = new Matrix4();
   private readonly prevClear = new Color();
 

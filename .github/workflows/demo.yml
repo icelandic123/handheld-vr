@@ -1,0 +1,60 @@
+name: Record demo video
+
+# Records "Watch the play" from the production build in the IWER emulator,
+# with captions and the synthesised soundtrack, and publishes the MP4 on the
+# orphan branch demo-video (for upload to YouTube / Devpost).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+        env:
+          NODE_ENV: production
+      - name: Install Playwright 1.56.1, Chromium and ffmpeg
+        run: |
+          npm i --no-save --no-audit --no-fund playwright@1.56.1
+          npx playwright install --with-deps chromium
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Record (fixed 1/24 s steps, one screenshot per step)
+        run: |
+          python3 -m http.server 4173 --directory dist >/dev/null 2>&1 &
+          sleep 2
+          node scripts/record-demo.mjs "http://localhost:4173/" demo
+      - name: Encode MP4 (1280x720, H.264 + AAC)
+        run: |
+          ffmpeg -y -loglevel error -framerate 24 -i demo/frames/f%05d.jpg -i demo/soundtrack.wav \
+            -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -vf "scale=1280:720" \
+            -c:a aac -b:a 160k -shortest -movflags +faststart little-lamp-theatre-demo.mp4
+          ffprobe -v error -show_entries format=duration:stream=codec_type,codec_name,width,height,nb_frames \
+            -of compact little-lamp-theatre-demo.mp4
+          d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 little-lamp-theatre-demo.mp4)
+          awk -v d="$d" 'BEGIN { if (d < 60 || d > 180) { print "duration " d "s is outside 60-180 s"; exit 1 } }'
+          cp demo/info.json demo-info.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo-video
+          path: |
+            little-lamp-theatre-demo.mp4
+            demo-info.json
+      - name: Publish the video on the demo-video branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan demo-video
+          git rm -rfq .
+          git add -f little-lamp-theatre-demo.mp4 demo-info.json
+          git commit -qm "Demo video"
+          git push -f origin demo-video

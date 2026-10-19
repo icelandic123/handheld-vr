@@ -1,5 +1,12 @@
-import type { XRMode } from './emulator.js';
-import { PLAY_SUBTITLE, PLAY_TITLE } from './story.js';
+import type { XRMode } from "./emulator.js";
+import {
+  cycled,
+  describe,
+  getSettings,
+  onSettingsChange,
+  updateSettings,
+} from "./settings.js";
+import { PLAY_SUBTITLE, PLAY_TITLE } from "./story.js";
 
 /**
  * The 2D page people see before entering: on a headset an "Enter" button; on a
@@ -7,11 +14,13 @@ import { PLAY_SUBTITLE, PLAY_TITLE } from './story.js';
  */
 export interface LandingActions {
   enter(): void;
+  /** Mixed reality: the paper screen in the player's own room (passthrough). */
+  enterAR(): void;
   watch(): void;
   tryIt(): void;
 }
 
-const LIVE_URL = 'https://icelandic123.github.io/handheld-vr/';
+const LIVE_URL = "https://icelandic123.github.io/handheld-vr/";
 
 const CSS = `
 #landing{position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;
@@ -31,28 +40,37 @@ const CSS = `
 #landing button:focus-visible{outline:3px solid #fff;outline-offset:3px}
 #landing .note{font-size:14px;opacity:.75}
 #landing code{background:rgba(255,255,255,.08);padding:2px 6px;border-radius:6px;word-break:break-all}
+#landing .settings{margin:22px auto 0;max-width:520px;text-align:left;font-size:16px;opacity:.95}
+#landing .settings summary{cursor:pointer;text-align:center;font-size:17px}
+#landing .settings .row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:8px 0}
+#landing .settings button{min-width:120px;margin:0;padding:8px 16px;font-size:16px}
 #helpbar{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:2001;background:rgba(20,10,5,.85);
   color:#f6e6cc;font:15px Georgia,serif;padding:10px 16px;border-radius:12px;max-width:92vw;text-align:center}
 `;
 
-export function showLanding(mode: XRMode, actions: LandingActions): { show(): void; hide(): void; help(text: string | null): void } {
-  const style = document.createElement('style');
+export function showLanding(
+  mode: XRMode,
+  actions: LandingActions,
+  opts: { ar: boolean } = { ar: false },
+): { show(): void; hide(): void; help(text: string | null): void } {
+  const style = document.createElement("style");
   style.textContent = CSS;
   document.head.appendChild(style);
-  const root = document.createElement('div');
-  root.id = 'landing';
-  const emu = mode === 'emulator' || mode === 'dev-emulator';
+  const root = document.createElement("div");
+  root.id = "landing";
+  const emu = mode === "emulator" || mode === "dev-emulator";
   root.innerHTML = `
     <div class="card" role="dialog" aria-labelledby="lt-title">
       <div class="lamp" aria-hidden="true"></div>
       <h1 id="lt-title">${PLAY_TITLE}</h1>
       <p class="sub">${PLAY_SUBTITLE}</p>
       <p>A hand-shadow puppet play. Sit comfortably, raise your hands into the lamplight,
-      and shape the dog, the rabbit and the bird on a glowing paper screen.</p>
+      and shape a dog, a rabbit, a bird, a swan and a snail on a glowing paper screen.</p>
       ${
-        mode === 'native'
+        mode === "native"
           ? `<p>Seated, hands only. Controllers are optional.</p>
-             <button id="lt-enter">Enter the theatre</button>`
+             <button id="lt-enter">Enter the theatre</button>
+             ${opts.ar ? '<button id="lt-enter-ar" class="ghost">Play in your room (passthrough)</button>' : ""}`
           : emu
             ? `<p><strong>Made for Meta Quest hand tracking.</strong> On a headset, open
                <code>${LIVE_URL}</code> in Meta Quest Browser.</p>
@@ -64,16 +82,40 @@ export function showLanding(mode: XRMode, actions: LandingActions): { show(): vo
                <p>Open <code>${LIVE_URL}</code> in Meta Quest Browser,
                or <a href="?emulator=1" style="color:#f0b46a">watch it in an emulator</a>.</p>`
       }
+      <details class="settings">
+        <summary>Comfort and settings</summary>
+        <div id="lt-settings"></div>
+        <p class="note">You can also poke the settings card on the theatre table.</p>
+      </details>
     </div>`;
   document.body.appendChild(root);
-  const bind = (id: string, fn: () => void) => root.querySelector(`#${id}`)?.addEventListener('click', fn);
-  bind('lt-enter', actions.enter);
-  bind('lt-watch', actions.watch);
-  bind('lt-try', actions.tryIt);
+  const settingsBox = root.querySelector("#lt-settings") as HTMLDivElement;
+  const renderSettings = () => {
+    settingsBox.innerHTML = describe(getSettings())
+      .map(
+        (r) =>
+          `<div class="row"><span>${r.label}</span><button class="ghost" data-key="${r.key}">${r.value}</button></div>`,
+      )
+      .join("");
+  };
+  settingsBox.addEventListener("click", (e) => {
+    const key = (e.target as HTMLElement).closest("button")?.dataset.key as
+      | keyof ReturnType<typeof getSettings>
+      | undefined;
+    if (key) updateSettings({ [key]: cycled(key) });
+  });
+  renderSettings();
+  onSettingsChange(renderSettings);
+  const bind = (id: string, fn: () => void) =>
+    root.querySelector(`#${id}`)?.addEventListener("click", fn);
+  bind("lt-enter", actions.enter);
+  bind("lt-enter-ar", actions.enterAR);
+  bind("lt-watch", actions.watch);
+  bind("lt-try", actions.tryIt);
   let bar: HTMLDivElement | null = null;
   return {
-    show: () => (root.style.display = 'flex'),
-    hide: () => (root.style.display = 'none'),
+    show: () => (root.style.display = "flex"),
+    hide: () => (root.style.display = "none"),
     help: (text) => {
       if (!text) {
         bar?.remove();
@@ -81,8 +123,8 @@ export function showLanding(mode: XRMode, actions: LandingActions): { show(): vo
         return;
       }
       if (!bar) {
-        bar = document.createElement('div');
-        bar.id = 'helpbar';
+        bar = document.createElement("div");
+        bar.id = "helpbar";
         document.body.appendChild(bar);
       }
       bar.textContent = text;

@@ -3,7 +3,7 @@
  * on the paper screen (large serif "printed" captions); every beat has a
  * matching synthesised sound cue.
  */
-export type Cue = 'lamp' | 'bark' | 'boing' | 'chirp' | 'applause' | 'none';
+export type Cue = 'lamp' | 'bark' | 'boing' | 'chirp' | 'honk' | 'bloop' | 'applause' | 'none';
 
 export interface PuppetScene {
   kind: 'puppet';
@@ -70,9 +70,27 @@ export const SCENES: Scene[] = [
     cue: 'chirp',
   },
   {
+    kind: 'puppet',
+    puppet: 'swan',
+    title: 'IV. The Swan on the Silver Lake',
+    narration: 'The bird set the rabbit down by a moonlit lake, where a swan was waiting.',
+    hint: 'Raise your hand on its side, fingers together, and bend them over for the head and beak.',
+    success: 'The swan glides across the silver water.',
+    cue: 'honk',
+  },
+  {
+    kind: 'puppet',
+    puppet: 'snail',
+    title: 'V. The Snail Who Was Nearly Late',
+    narration: 'Last of all came a snail, slow and steady, hoping to arrive in time for the bow.',
+    hint: 'One hand flat and sideways for the body, the other in a fist on top for the shell.',
+    success: 'Just in time! Slow and steady wins the night.',
+    cue: 'bloop',
+  },
+  {
     kind: 'curtain',
     title: 'Curtain Call',
     narration: 'And so the night visitors take their bow. Wave goodnight to close the curtain.',
-    cast: ['dog', 'rabbit', 'bird'],
+    cast: ['dog', 'rabbit', 'bird', 'swan', 'snail'],
   },
 ];

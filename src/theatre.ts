@@ -13,6 +13,7 @@ import {
   PlaneGeometry,
   PointLight,
   Quaternion,
+  SessionMode,
   ShaderMaterial,
   SphereGeometry,
   SpotLight,
@@ -41,7 +42,9 @@ import {
   wristPlacement,
 } from './shadow/hand-rig.js';
 import { J, JOINT_COUNT } from './shadow/joints.js';
-import { PUPPETS, puppetById, PuppetPose, REST_PLACEMENT, RESTING } from './shadow/poses.js';
+import { mirrorPuppet, PUPPETS, PuppetPose, REST_PLACEMENT, RESTING } from './shadow/poses.js';
+import { cycled, getSettings, onSettingsChange, SCREEN_SCALE, updateSettings } from './settings.js';
+import { SettingsCard } from './settings-card.js';
 import { ScoreResult, SilhouetteScorer } from './shadow/score.js';
 import { ShadowLight } from './shadow/shadow-light.js';
 import { Cue, Scene, SCENES } from './story.js';
@@ -123,6 +126,12 @@ export class TheatreSystem extends createSystem({}) {
   private screenShader: ShaderMaterial | null = null;
   private title!: TextBand;
   private footer!: TextBand;
+  /** Everything on the paper screen; scaled about the eyes for the screen-distance setting. */
+  private screenGroup!: Group;
+  private table!: Mesh;
+  private settingsCard!: SettingsCard;
+  /** Puppets as the player makes them (mirrored for right-handed play). */
+  private puppetDefs = new Map<string, PuppetPose>();
   /** Ink drawing of the character the player is making. */
   private card!: TextBand;
   /** "Woof!" when a puppet comes alive. */
@@ -185,6 +194,8 @@ export class TheatreSystem extends createSystem({}) {
   stepMode = false;
   stepDt = 1 / 24;
   private pendingSteps = 0;
+  /** Steps consumed so far (lets a recorder know a stepped frame has run). */
+  stepCount = 0;
   /** Called every frame with the story clock (used by the demo autopilot). */
   onFrame: ((dt: number) => void) | null = null;
 
@@ -202,13 +213,9 @@ export class TheatreSystem extends createSystem({}) {
   };
 
   init(): void {
+    this.rebuildPuppets();
     this.buildStage();
-    this.light = new ShadowLight({
-      center: STAGE.screenCenter,
-      width: STAGE.screenW,
-      height: STAGE.screenH,
-      light: STAGE.light,
-    });
+    this.light = new ShadowLight(this.screenSpec());
     this.readbackBuf = new Uint8Array(this.light.scoreW * this.light.scoreH * 4);
     for (const p of PUPPETS) {
       const scorer = new SilhouetteScorer(this.light.scoreW, this.light.scoreH, { tolerancePx: 1 });
@@ -226,7 +233,7 @@ export class TheatreSystem extends createSystem({}) {
       this.hands[h].setTracked(false, true);
       if (NATIVE_SHADOWS) this.hands[h].visibleRoot.traverse((o) => (o.castShadow = true));
     }
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 8; i++) {
       const g = new HandProxy(null, this.light.casterMaterial);
       g.setTracked(false, false);
       this.light.ghostScene.add(g.casterRoot);
@@ -247,8 +254,51 @@ export class TheatreSystem extends createSystem({}) {
     window.addEventListener('keydown', onKey);
     this.cleanupFuncs.push(() => window.removeEventListener('keydown', onKey));
 
+    this.cleanupFuncs.push(
+      onSettingsChange((_s, changed) => {
+        if (changed.includes('hand')) {
+          this.rebuildPuppets();
+          this.masksDirty = true;
+        }
+        if (changed.includes('screen')) this.applyScreenDistance();
+        this.targetDisplayDirty = true;
+      }),
+    );
+    this.applyScreenDistance();
+
     this.startScene(0);
     this.installDebugApi();
+  }
+
+  private rebuildPuppets(): void {
+    const right = getSettings().hand === 'right';
+    this.puppetDefs = new Map(PUPPETS.map((p) => [p.id, right ? mirrorPuppet(p) : p]));
+  }
+
+  puppetDef(id: string): PuppetPose {
+    const p = this.puppetDefs.get(id);
+    if (!p) throw new Error(`Unknown puppet ${id}`);
+    return p;
+  }
+
+  /** The screen as the shadow projector sees it (stage-local, after the distance setting). */
+  private screenSpec(): { center: Vector3; width: number; height: number; light: Vector3 } {
+    const k = SCREEN_SCALE[getSettings().screen];
+    return {
+      center: STAGE.screenCenter.clone().multiplyScalar(k),
+      width: STAGE.screenW * k,
+      height: STAGE.screenH * k,
+      light: STAGE.light,
+    };
+  }
+
+  private applyScreenDistance(): void {
+    const k = SCREEN_SCALE[getSettings().screen];
+    this.screenGroup.scale.setScalar(k);
+    this.screenGroup.updateMatrixWorld(true);
+    this.light.configure(this.screenSpec());
+    this.masksDirty = true;
+    this.targetDisplayDirty = true;
   }
 
   // ---------------------------------------------------------------- stage
@@ -271,27 +321,31 @@ export class TheatreSystem extends createSystem({}) {
     mk(bar, h, -w / 2 - bar / 2, 0);
     mk(bar, h, w / 2 + bar / 2, 0);
     frame.position.copy(c);
-    stage.add(frame);
+    const screenGroup = new Group();
+    screenGroup.name = 'ScreenGroup';
+    this.screenGroup = screenGroup;
+    stage.add(screenGroup);
+    screenGroup.add(frame);
 
     const screen: Mesh<PlaneGeometry, Material> = new Mesh(new PlaneGeometry(w, h), new MeshBasicMaterial());
     screen.name = 'PaperScreen';
     screen.position.copy(c);
-    stage.add(screen);
+    screenGroup.add(screen);
     this.screenMesh = screen;
 
     this.title = new TextBand(w * 0.96, 0.2);
     this.title.mesh.position.set(c.x, c.y + h / 2 - 0.12, c.z + 0.003);
-    stage.add(this.title.mesh);
+    screenGroup.add(this.title.mesh);
     this.footer = new TextBand(w * 0.96, 0.1);
     this.footer.mesh.position.set(c.x, c.y - h / 2 + 0.065, c.z + 0.003);
-    stage.add(this.footer.mesh);
+    screenGroup.add(this.footer.mesh);
     this.card = new TextBand(0.26, 0.24, 384);
     this.card.mesh.position.set(c.x - w / 2 + 0.17, c.y + h / 2 - 0.37, c.z + 0.003);
-    stage.add(this.card.mesh);
+    screenGroup.add(this.card.mesh);
     this.callout = new TextBand(0.3, 0.12, 512);
     this.callout.mesh.visible = false;
     this.callout.mesh.renderOrder = 3;
-    stage.add(this.callout.mesh);
+    screenGroup.add(this.callout.mesh);
 
     const table = new Mesh(
       new BoxGeometry(1.1, 0.04, 0.7),
@@ -300,6 +354,11 @@ export class TheatreSystem extends createSystem({}) {
     table.position.set(0, STAGE.tableTop - 0.02, -0.45);
     table.receiveShadow = true;
     stage.add(table);
+    this.table = table;
+    this.settingsCard = new SettingsCard();
+    this.settingsCard.mesh.position.set(-0.44, STAGE.tableTop + 0.07, -0.33);
+    this.settingsCard.mesh.rotation.set(-0.75, 0.55, 0, 'YXZ');
+    stage.add(this.settingsCard.mesh);
 
     const lamp = new Group();
     const brass = new MeshStandardMaterial({ color: new Color(0.55, 0.38, 0.15), metalness: 0.6, roughness: 0.35 });
@@ -398,7 +457,7 @@ export class TheatreSystem extends createSystem({}) {
 
   get puppet(): PuppetPose | null {
     const s = this.act;
-    return s.kind === 'puppet' ? puppetById(s.puppet) : null;
+    return s.kind === 'puppet' ? this.puppetDef(s.puppet) : null;
   }
 
   startScene(i: number): void {
@@ -464,6 +523,12 @@ export class TheatreSystem extends createSystem({}) {
       case 'chirp':
         this.audio.chirp();
         break;
+      case 'honk':
+        this.audio.honk();
+        break;
+      case 'bloop':
+        this.audio.bloop();
+        break;
       case 'applause':
         this.audio.applause();
         break;
@@ -512,11 +577,10 @@ export class TheatreSystem extends createSystem({}) {
 
   /** Where the lamp throws a stage-local point onto the screen, as screen UV. */
   private projectToScreen(p: Vector3, out: Vector4): void {
-    const L = STAGE.light;
-    const c = STAGE.screenCenter;
+    const { center: c, width: W, height: H, light: L } = this.light.spec;
     const t = (c.z - L.z) / Math.min(-1e-4, p.z - L.z);
-    out.x = (L.x + (p.x - L.x) * t - (c.x - STAGE.screenW / 2)) / STAGE.screenW;
-    out.y = (L.y + (p.y - L.y) * t - (c.y - STAGE.screenH / 2)) / STAGE.screenH;
+    out.x = (L.x + (p.x - L.x) * t - (c.x - W / 2)) / W;
+    out.y = (L.y + (p.y - L.y) * t - (c.y - H / 2)) / H;
   }
 
   /** Render every puppet's scored silhouette once and read the masks back. */
@@ -525,7 +589,7 @@ export class TheatreSystem extends createSystem({}) {
     this.masksBuilding = true;
     this.masksDirty = false;
     const pending: Promise<unknown>[] = [];
-    for (const p of PUPPETS) {
+    for (const p of this.puppetDefs.values()) {
       const m = this.masks.get(p.id)!;
       this.poseGhosts([{ puppet: p, aliveT: 0, dx: 0, scale: 1, bow: 0 }]);
       this.light.renderGhostScore(this.renderer, m.rt);
@@ -547,17 +611,17 @@ export class TheatreSystem extends createSystem({}) {
     const s = this.act;
     if (s.kind === 'puppet') {
       const aliveT = this.phase === 'alive' ? this.phaseTime + 1e-4 : 0;
-      this.poseGhosts([{ puppet: puppetById(s.puppet), aliveT, dx: 0, scale: 1, bow: 0 }]);
+      this.poseGhosts([{ puppet: this.puppetDef(s.puppet), aliveT, dx: 0, scale: 1, bow: 0 }]);
     } else {
       const n = s.cast.length;
       const t = this.phaseTime;
       const bowing = this.phase === 'bow' ? 1 : 0;
       this.poseGhosts(
         s.cast.map((id, i) => ({
-          puppet: puppetById(id),
+          puppet: this.puppetDef(id),
           aliveT: 0,
-          dx: (i - (n - 1) / 2) * 0.13,
-          scale: 0.72,
+          dx: (i - (n - 1) / 2) * (n > 3 ? 0.075 : 0.13),
+          scale: n > 3 ? 0.5 : 0.72,
           bow: Math.max(0, Math.sin(Math.max(0, t - 0.6 - i * 0.25) * 1.6)) * bowing,
         })),
       );
@@ -588,7 +652,10 @@ export class TheatreSystem extends createSystem({}) {
     let dt = delta;
     if (this.stepMode) {
       dt = this.pendingSteps > 0 ? this.stepDt : 0;
-      if (this.pendingSteps > 0) this.pendingSteps--;
+      if (this.pendingSteps > 0) {
+        this.pendingSteps--;
+        this.stepCount++;
+      }
     }
     this.elapsed += dt;
     this.phaseTime += dt;
@@ -608,6 +675,9 @@ export class TheatreSystem extends createSystem({}) {
     this.light.setStageMatrix(this.stage.matrixWorld);
 
     this.onFrame?.(dt);
+    // In passthrough the player's own table is there; drop the virtual one.
+    const blend = this.renderer.xr.getSession()?.environmentBlendMode;
+    this.table.visible = blend !== 'alpha-blend' && blend !== 'additive';
     this.readHands();
 
     if (this.masksDirty && this.anchored) this.buildMasks();
@@ -819,7 +889,35 @@ export class TheatreSystem extends createSystem({}) {
     }
   }
 
+  private cardArmed = true;
+  private readonly cardInv = new Matrix4();
+
+  /** Poking the settings card on the table cycles the row under the fingertip. */
+  private checkSettingsCard(): void {
+    const card = this.settingsCard;
+    this.cardInv.copy(card.mesh.matrixWorld).invert();
+    let hit = -1;
+    for (const h of HANDS) {
+      if (!this.tracked[h]) continue;
+      this.tmpV.copy(this.hands[h].joints[9]).applyMatrix4(this.player.matrixWorld).applyMatrix4(this.cardInv);
+      const r = card.hitRow(this.tmpV);
+      if (r >= 0) hit = r;
+    }
+    if (hit < 0) {
+      this.cardArmed = true;
+      return;
+    }
+    if (!this.cardArmed) return;
+    this.cardArmed = false;
+    const now = performance.now() / 1000;
+    const key = card.keyOf(hit, getSettings());
+    card.flash(hit, now);
+    this.audio.pageTurn();
+    updateSettings({ [key]: cycled(key) });
+  }
+
   private checkBells(): void {
+    this.checkSettingsCard();
     if (this.elapsed - this.lastPoke < 1.2) return;
     for (const [bell, action] of [
       [STAGE.skipButton, 'skip'],
@@ -843,6 +941,9 @@ export class TheatreSystem extends createSystem({}) {
   private drawHud(): void {
     const s = this.act;
     const pup = this.puppet;
+    const prefs = getSettings();
+    this.settingsCard.draw(prefs, performance.now() / 1000);
+    const big = prefs.largeText ? 1.28 : 1;
     let title = s.title;
     let line = s.narration;
     if (s.kind === 'puppet' && this.phase === 'alive') line = s.success;
@@ -854,22 +955,26 @@ export class TheatreSystem extends createSystem({}) {
     const onCurtain = this.phase === 'closing' || this.phase === 'closed';
     const ink = onCurtain ? GILT : INK;
     const inkSoft = onCurtain ? GILT_SOFT : INK_SOFT;
-    this.title.draw(`${this.sceneIndex}|${this.phase}|${title}|${line}`, (ctx, w, h) => {
+    if (!prefs.subtitles) line = '';
+    this.title.draw(`${this.sceneIndex}|${this.phase}|${title}|${line}|${big}`, (ctx, w, h) => {
       ctx.fillStyle = ink;
       ctx.textAlign = 'center';
-      ctx.font = `bold ${Math.round(h * 0.3)}px ${FONT}`;
+      ctx.font = `bold ${Math.round(h * 0.3 * Math.min(big, 1.1))}px ${FONT}`;
       ctx.fillText(title, w / 2, h * 0.32);
       ctx.fillStyle = inkSoft;
-      ctx.font = `${Math.round(h * 0.19)}px ${FONT}`;
+      ctx.font = `${Math.round(h * 0.19 * big)}px ${FONT}`;
       const lines = wrapText(ctx, line, w * 0.92);
-      lines.slice(0, 2).forEach((l, i) => ctx.fillText(l, w / 2, h * (0.62 + i * 0.22)));
+      lines.slice(0, 2).forEach((l, i) => ctx.fillText(l, w / 2, h * (0.62 + i * 0.22 * big)));
     });
 
     // The character card: what this hand shape is meant to become.
     const cardPuppet = this.phase === 'playing' || this.phase === 'alive' ? pup : null;
     this.card.mesh.visible = cardPuppet != null;
     if (cardPuppet) {
-      this.card.draw(cardPuppet.id, (ctx, w, h) => drawSketchCard(ctx, w, h, cardPuppet.id, cardPuppet.caption, INK, FONT));
+      const mirror = prefs.hand === 'right';
+      this.card.draw(`${cardPuppet.id}|${mirror}`, (ctx, w, h) =>
+        drawSketchCard(ctx, w, h, cardPuppet.id, cardPuppet.caption, INK, FONT, mirror),
+      );
     }
     this.drawCallout(pup);
 
@@ -879,13 +984,13 @@ export class TheatreSystem extends createSystem({}) {
     if (this.phase === 'playing' && pup) {
       if (!anyHand) status = 'Raise your hands into the lamplight';
       else if (this.smoothRunner > this.smoothScore && this.smoothRunner > 0.8 && this.runnerId)
-        status = this.runnerId === 'hello' ? 'Lovely wave! Now shape the ' + (pup.name.replace(/^The /u, '').toLowerCase()) + '.' : `Lovely, but that looks like the ${puppetById(this.runnerId).name.replace(/^The /u, '').toLowerCase()}!`;
+        status = this.runnerId === 'hello' ? 'Lovely wave! Now shape the ' + (pup.name.replace(/^The /u, '').toLowerCase()) + '.' : `Lovely, but that looks like the ${this.puppetDef(this.runnerId).name.replace(/^The /u, '').toLowerCase()}!`;
       else if (this.phaseTime > 25) status = 'Need a hand? Poke the bell to skip.';
       else status = this.phaseTime > 4 && s.kind === 'puppet' ? s.hint : '';
     } else if (this.phase === 'bow') status = 'Wave goodnight with an open hand';
     else if (this.phase === 'closed') status = 'Poke the bell to play again';
     const showBar = this.phase === 'playing' || this.phase === 'bow';
-    this.footer.draw(`${pct}|${this.sceneIndex}|${this.phase}|${status}`, (ctx, w, h) => {
+    this.footer.draw(`${pct}|${this.sceneIndex}|${this.phase}|${status}|${big}`, (ctx, w, h) => {
       ctx.fillStyle = inkSoft;
       ctx.textAlign = 'left';
       ctx.font = `${Math.round(h * 0.3)}px ${FONT}`;
@@ -900,9 +1005,10 @@ export class TheatreSystem extends createSystem({}) {
         ctx.fillRect(bx, h * 0.33, bw * Math.min(1, this.smoothScore / this.threshold), h * 0.3);
       }
       ctx.textAlign = 'center';
-      ctx.font = `${Math.round(h * 0.28)}px ${FONT}`;
-      const lines = wrapText(ctx, status, w * 0.66);
-      lines.slice(0, 2).forEach((l, i) => ctx.fillText(l, w * 0.62, h * (lines.length > 1 ? 0.42 + i * 0.36 : 0.6)));
+      ctx.font = `${Math.round(h * 0.28 * big)}px ${FONT}`;
+      const lines = wrapText(ctx, status, w * 0.7);
+      const gap = 0.36 * big;
+      lines.slice(0, 2).forEach((l, i) => ctx.fillText(l, w * 0.62, h * (lines.length > 1 ? 0.6 - gap / 2 + i * gap : 0.6)));
     });
   }
 
@@ -945,7 +1051,7 @@ export class TheatreSystem extends createSystem({}) {
    * puppet (t=1). Hands the puppet does not use stay resting.
    */
   emulatorPlacement(id: string | null, t: number, sway = 0, jitterDeg = 0): Record<Hand, EmulatorHand> {
-    const p = id ? puppetById(id) : null;
+    const p = id ? this.puppetDef(id) : null;
     const out = {} as Record<Hand, EmulatorHand>;
     for (const h of HANDS) {
       const target: PlacedHand | undefined = p?.hands[h];
@@ -1012,10 +1118,37 @@ export class TheatreSystem extends createSystem({}) {
         handScale: this.handScale,
         frameNo: this.frameNo,
         elapsed: this.elapsed,
+        stepCount: this.stepCount,
+        pendingSteps: this.pendingSteps,
         perf: { ...this.perf },
         scoreGrid: [this.light.scoreW, this.light.scoreH],
         displayRT: [this.light.displayRT.width, this.light.displayRT.height],
       }),
+      /** Enter XR directly (tests): 'vr' or 'ar' (passthrough). */
+      enterXR: (mode: 'vr' | 'ar' = 'vr') =>
+        this.world.launchXR({ sessionMode: mode === 'ar' ? SessionMode.ImmersiveAR : SessionMode.ImmersiveVR }),
+      tableVisible: () => this.table.visible,
+      /** World position of a tracked index fingertip (tests). */
+      fingertip: (h: Hand) => this.tmpV.copy(this.hands[h].joints[9]).applyMatrix4(this.player.matrixWorld).toArray(),
+      settingsCardNormal: () => new Vector3(0, 0, 1).transformDirection(this.settingsCard.mesh.matrixWorld).toArray(),
+      settings: () => ({ ...getSettings() }),
+      setSettings: (patch: Record<string, unknown>) => updateSettings(patch),
+      /** Where the settings card is, for poke tests: world position of a row's centre. */
+      settingsRowWorld: (row: number) => {
+        const v = new Vector3(0, 0.105 - 0.045 - (row + 0.5) * ((0.21 - 0.045) / 4), 0);
+        return v.applyMatrix4(this.settingsCard.mesh.matrixWorld).toArray();
+      },
+      /** Log sound cues against the story clock, starting at `offset` seconds. */
+      recordSound: (on: boolean, offset = 0) => {
+        const e0 = this.elapsed;
+        this.audio.recording = on ? { clock: () => this.elapsed - e0 + offset, events: [] } : null;
+      },
+      soundEvents: () => this.audio.recording?.events.slice() ?? [],
+      /** Render the recorded cues to a 16-bit stereo WAV, base64. */
+      renderSoundtrack: async (seconds: number) => {
+        const buf = await TheatreAudio.render(this.audio.recording?.events ?? [], seconds);
+        return wavBase64(buf);
+      },
       emulatorPose: (id: string, jitter = 0) => this.emulatorPlacement(id, 1, 0, jitter),
       emulatorPlacement: (id: string | null, t: number, sway = 0) => this.emulatorPlacement(id, t, sway),
       /** Raw RGBA of the last live readback and the current target mask. */
@@ -1029,6 +1162,38 @@ export class TheatreSystem extends createSystem({}) {
 }
 
 /** Puppet-specific "alive" animation: tweak the shape over time. */
+function wavBase64(buf: AudioBuffer): string {
+  const ch = buf.numberOfChannels;
+  const n = buf.length;
+  const bytes = new Uint8Array(44 + n * ch * 2);
+  const v = new DataView(bytes.buffer);
+  const str = (o: number, t: string) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF');
+  v.setUint32(4, 36 + n * ch * 2, true);
+  str(8, 'WAVEfmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, ch, true);
+  v.setUint32(24, buf.sampleRate, true);
+  v.setUint32(28, buf.sampleRate * ch * 2, true);
+  v.setUint16(32, ch * 2, true);
+  v.setUint16(34, 16, true);
+  str(36, 'data');
+  v.setUint32(40, n * ch * 2, true);
+  const data = Array.from({ length: ch }, (_, c) => buf.getChannelData(c));
+  let o = 44;
+  for (let i = 0; i < n; i++) {
+    for (let c = 0; c < ch; c++) {
+      const x = Math.max(-1, Math.min(1, data[c][i]));
+      v.setInt16(o, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+      o += 2;
+    }
+  }
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
 /** Eye openness over time: open, with a quick blink every few seconds. */
 function blink(t: number): number {
   const k = (t % 3.4) / 0.16;
@@ -1052,6 +1217,14 @@ function animateShape(id: string, s: HandShape, t: number): HandShape {
         index: { ...s.index, mcp: 15 * osc, spread: (s.index.spread ?? 0) + 6 * osc },
         middle: { ...s.middle, mcp: 15 * (1 - osc) },
       };
+    case 'swan': {
+      // The head dips and rises.
+      const f = 12 * Math.sin(t * 2.2);
+      const w = (c: HandShape['index']) => ({ ...c, mcp: c.mcp + f });
+      return { ...s, index: w(s.index), middle: w(s.middle), ring: w(s.ring), pinky: w(s.pinky) };
+    }
+    case 'snail':
+      return s;
     case 'bird': {
       const f = 25 * Math.sin(t * 7);
       const w = (c: HandShape['index']) => ({ ...c, mcp: c.mcp + f, pip: c.pip + Math.max(0, f) * 0.5 });
@@ -1073,6 +1246,10 @@ function wiggle(id: string, t: number, m: Matrix4): void {
     e[12] += t * 0.02;
   } else if (id === 'hello') e[12] += Math.sin(t * 6) * 0.03;
   else if (id === 'dog') e[13] += Math.abs(Math.sin(t * 4.5)) * 0.008;
+  else if (id === 'swan') {
+    e[12] += Math.sin(t * 0.9) * 0.03;
+    e[13] += Math.sin(t * 2.2) * 0.006;
+  } else if (id === 'snail') e[12] += t * 0.008;
 }
 
 const bowRot = new Matrix4();

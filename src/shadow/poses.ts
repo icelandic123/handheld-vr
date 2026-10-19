@@ -68,6 +68,33 @@ const WING: HandShape = {
   pinky: curl(5, 10, 5, -10),
 };
 
+/** Swan: hand on its side, fingers together and bent over for the head and beak. */
+const SWAN: HandShape = {
+  thumb: { cmcAbd: -10, cmcFlex: 20, mcp: 20, ip: 10 },
+  index: curl(65, 35, 10, -2),
+  middle: curl(65, 35, 10, -1),
+  ring: curl(65, 35, 10, 1),
+  pinky: curl(65, 35, 10, 3),
+};
+
+/** Snail shell: a loose fist. */
+const SHELL: HandShape = {
+  thumb: { cmcAbd: -10, cmcFlex: 30, mcp: 40, ip: 30 },
+  index: fist,
+  middle: fist,
+  ring: fist,
+  pinky: fist,
+};
+
+/** Snail body: a flat hand, fingers together. */
+const FOOT: HandShape = {
+  thumb: { cmcAbd: -25, cmcFlex: 35, mcp: 35, ip: 20 },
+  index: curl(0, 5, 0, -4),
+  middle: curl(0, 5, 0, 0),
+  ring: curl(0, 5, 0, 3),
+  pinky: curl(0, 5, 0, 6),
+};
+
 export const PUPPETS: PuppetPose[] = [
   {
     id: 'hello',
@@ -113,6 +140,30 @@ export const PUPPETS: PuppetPose[] = [
       right: { shape: WING, offset: [0.03, 0, 0.012], point: [-1, 0.5, 0], back: [0, 0, -1] },
     },
   },
+  {
+    id: 'swan',
+    name: 'The Swan',
+    hint: 'Raise your hand on its side, fingers together, and bend them over for the head and beak.',
+    caption: 'the swan',
+    hands: {
+      // Edge-on to the lamp: the palm makes a slim neck, the bent fingers the head.
+      left: { shape: SWAN, offset: [0, -0.02, 0], point: [0.1, 1, 0], back: [-1, 0, 0] },
+    },
+    eye: { hand: 'left', joint: J.indexProx, offset: [0, 0.012, -0.01], r: 0.018 },
+    say: { text: 'Honk!', dx: 0.2, dy: 0.08 },
+  },
+  {
+    id: 'snail',
+    name: 'The Snail',
+    hint: 'One hand flat and sideways for the body, the other in a fist on top for the shell.',
+    caption: 'the snail',
+    hands: {
+      left: { shape: SHELL, offset: [0.07, -0.02, 0.015], point: [0.25, 1, 0], back: [0, 0, -1] },
+      right: { shape: FOOT, offset: [-0.02, -0.03, 0], point: [1, 0.05, 0], back: [0, 1, 0] },
+    },
+    eye: { hand: 'right', joint: J.middleProx, offset: [0, 0.01, -0.03], r: 0.016 },
+    say: { text: 'Made it!', dx: 0.2, dy: 0.12 },
+  },
 ];
 
 export const STRAIGHT = straight;
@@ -134,4 +185,20 @@ export function puppetById(id: string): PuppetPose {
   const p = PUPPETS.find((x) => x.id === id);
   if (!p) throw new Error(`Unknown puppet ${id}`);
   return p;
+}
+
+/**
+ * The same puppet made with the other hand: placements, eye and callout
+ * mirrored across the stage's centre line. Puppets are authored for the left
+ * hand; right-handed players get the mirror (the dog then faces left).
+ */
+export function mirrorPuppet(p: PuppetPose): PuppetPose {
+  const m = (v: [number, number, number]): [number, number, number] => [-v[0], v[1], v[2]];
+  const mp = (h?: PlacedHand): PlacedHand | undefined => h && { ...h, offset: m(h.offset), point: m(h.point), back: m(h.back) };
+  return {
+    ...p,
+    hands: { left: mp(p.hands.right), right: mp(p.hands.left) },
+    eye: p.eye && { ...p.eye, hand: p.eye.hand === 'left' ? 'right' : 'left', offset: m(p.eye.offset) },
+    say: p.say && { ...p.say, dx: -p.say.dx },
+  };
 }

@@ -1,8 +1,8 @@
 # The Little Lamp Theatre
 
 A hand-shadow puppet play for WebXR on Meta Quest. Sit at a small table, raise
-your hands into the lamplight, and shape a dog, a rabbit and a bird on a glowing
-paper screen. Get the shape right and the shadow comes alive.
+your hands into the lamplight, and shape a dog, a rabbit, a bird, a swan and a
+snail on a glowing paper screen. Get the shape right and the shadow comes alive.
 
 **Play:** https://icelandic123.github.io/handheld-vr/ (open it in Meta Quest
 Browser). On a laptop the same link plays the show in an emulated headset.
@@ -20,18 +20,30 @@ Immersive Web SDK (IWSDK).
   curled under the thumb.
 - **III. The Bird Who Gave a Ride:** cross your wrists, hook your thumbs, spread
   your fingers as wings.
+- **IV. The Swan on the Silver Lake:** hand on its side, fingers together and
+  bent over for the head and beak.
+- **V. The Snail Who Was Nearly Late:** one hand flat and sideways for the body,
+  a fist on top for the shell.
 - **Curtain call:** the cast bows. Wave goodnight to close the curtain.
 
 A faint outline shows each target, with a little ink drawing of the character
 in the corner. As your shadow gets close, it opens an eye. Hold the shape for
 half a second and the puppet comes alive: the dog barks, the rabbit hops toward
-the moon, the bird flies. If you get
+the moon, the bird flies, the swan glides. If you get
 stuck, poke the brass bell on the right of the table to skip a scene. The bell on
 the left leaves the theatre.
 
+**Settings** are on the card standing on the left of the table: poke a row to
+change it. The same settings are on the start page. They cover subtitles,
+larger text, screen distance (near, normal or far) and which hand makes the
+one-hand puppets (right by default; left mirrors every puppet). On headsets
+that support passthrough, "Play in your room" opens the same play with the
+paper screen floating in your own room.
+
 **On a laptop:** "Watch the play" runs the whole show with emulated hands. "Try
 it with emulated hands" lets you press 1 to 4 to snap the hands into each shape,
-0 to rest them, N to skip and Esc to leave. Add `?emulator=1` to force the
+0 to rest them, N to skip and Esc to leave. (Keys 5 and 6 are the swan and the
+snail.) Add `?emulator=1` to force the
 emulator, or `?emulator=0` to turn it off.
 
 ## How it works
@@ -95,6 +107,15 @@ check fails if, with the game's own threshold and margin, any puppet's shape
 passes as another, or fewer than 90% of jittered correct poses pass.
 `tools/pose-preview.mjs` takes screenshots of each puppet (target, matched,
 alive) for tuning.
+
+## Demo video
+
+`.github/workflows/demo.yml` (run it by hand) records "Watch the play" from the
+production build with `scripts/record-demo.mjs`. The show runs in fixed 1/24 s
+steps with one screenshot per step, so the video is smooth on a slow software
+GPU. Captions are a page overlay. Sound cues are logged on the story clock and
+rendered offline with the same WebAudio code. ffmpeg encodes a 1280x720 MP4,
+which is published on the `demo-video` branch.
 
 ## Deploy
 
