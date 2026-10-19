@@ -6,22 +6,30 @@
  */
 
 import { iwsdkDev } from '@iwsdk/vite-plugin-dev';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [iwsdkDev()],
   server: { host: '0.0.0.0', port: 8081, open: false },
   build: {
     outDir: 'dist',
     sourcemap: process.env.NODE_ENV !== 'production',
     target: 'esnext',
-    rollupOptions: { input: './index.html' },
+    rollupOptions: {
+      input: './index.html',
+    },
   },
   esbuild: { target: 'esnext' },
   // @drawcall/uikitml otherwise pulls a second three/@pmndrs/uikit graph
   // (three@0.185 vs app super-three@0.181). Duplicate Component classes break
   // instanceof checks → "Only pmndrs/uikit components can be added as children".
   resolve: {
+    // No spatial UI here: drop the SDK's full icon set from production builds.
+    alias:
+      command === 'build'
+        ? { '@pmndrs/uikit-lucide': fileURLToPath(new URL('./src/stubs/uikit-lucide.ts', import.meta.url)) }
+        : {},
     dedupe: [
       'three',
       '@pmndrs/uikit',
@@ -42,4 +50,4 @@ export default defineConfig({
   },
   publicDir: 'public',
   base: './',
-});
+}));

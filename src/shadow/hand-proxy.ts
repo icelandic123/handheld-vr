@@ -27,10 +27,11 @@ export const LAYER_DISPLAY_ONLY = 2;
 const UP = new Vector3(0, 1, 0);
 
 /**
- * Forearm caster: coverage fades from 1 at the wrist to 0 about a third of the
- * way to the elbow, and is MAX-blended so it never darkens the hand. This keeps
- * the arm from throwing a giant wedge across the screen (a real lamp's falloff
- * looks much the same) while the shadow still reads as "attached to an arm".
+ * Forearm caster. Hands write coverage into the red channel (the only one that
+ * is scored); the forearm writes into green, fading from the wrist toward the
+ * elbow. The screen shader blurs green very widely, the way a real lamp blurs
+ * anything held close to it, so the arm reads as a soft dark sleeve instead of
+ * a hard wedge across the screen. MAX blending keeps it from touching red.
  */
 let forearmCasterMaterial: ShaderMaterial | null = null;
 function getForearmCasterMaterial(): ShaderMaterial {
@@ -46,8 +47,8 @@ function getForearmCasterMaterial(): ShaderMaterial {
     fragmentShader: /* glsl */ `
       varying float vAlong;
       void main() {
-        float f = 1.0 - smoothstep(0.05, 0.4, vAlong);
-        gl_FragColor = vec4(vec3(f), 1.0);
+        float f = 1.0 - smoothstep(0.0, 0.75, vAlong);
+        gl_FragColor = vec4(0.0, f, 0.0, 1.0);
       }
     `,
     depthTest: false,

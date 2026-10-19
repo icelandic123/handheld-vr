@@ -22,7 +22,10 @@ Immersive Web SDK (IWSDK).
   your fingers as wings.
 - **Curtain call:** the cast bows. Wave goodnight to close the curtain.
 
-A faint outline shows each target. Hold the shape for half a second. If you get
+A faint outline shows each target, with a little ink drawing of the character
+in the corner. As your shadow gets close, it opens an eye. Hold the shape for
+half a second and the puppet comes alive: the dog barks, the rabbit hops toward
+the moon, the bird flies. If you get
 stuck, poke the brass bell on the right of the table to skip a scene. The bell on
 the left leaves the theatre.
 
@@ -35,8 +38,9 @@ emulator, or `?emulator=0` to turn it off.
 
 - **Hands become capsules** (`src/shadow/hand-proxy.ts`). The 25 WebXR joint
   poses and radii drive instanced spheres and cylinders, a palm fan and an IK
-  forearm. The forearm's shadow fades out just past the wrist and is never
-  scored, so the arm can't fill a target.
+  forearm. Hands cast into one colour channel and the forearm into another, so
+  the arm is drawn as a soft blurred sleeve (as a real lamp blurs anything held
+  close to it) and is never scored.
 - **A shadow is a projection from the lamp** (`src/shadow/shadow-light.ts`). For
   a point light and a flat screen, a shadow is the perspective projection of the
   hands from the light onto that plane. The hands are rendered from the lamp
@@ -50,9 +54,13 @@ emulator, or `?emulator=0` to turn it off.
   can be reached by a real hand.
 - **Scoring** (`src/shadow/score.ts`) aligns centroid and scale, then computes a
   symmetric tolerant F1: the shadow inside the target and the target covered by
-  the shadow. It costs about 0.1 ms per call. A pose passes when it scores at
-  least 0.85 *and* beats every look-alike puppet by 0.03, so an open hand can't
-  pass as the rabbit.
+  the shadow. It costs about 0.06 ms per call. A pose passes when it scores at
+  least 0.8 *and* beats every look-alike puppet by 0.03, so an open hand can't
+  pass as the rabbit. The threshold is deliberately forgiving.
+- **Characters** (`src/sketches.ts`, `EyeSpec` in `src/shadow/poses.ts`). Each
+  puppet's eye is a point on one finger joint, projected from the lamp onto the
+  screen and drawn as a gap of lamplight, the way puppeteers make eyes with a
+  bent finger. The ink drawings on the cards are hand-written canvas paths.
 - **Sound** is synthesised with WebAudio (`src/audio.ts`): bark, boing, chirp,
   applause and the curtain. There are no audio files.
 - **Laptop fallback** (`src/emulator.ts`, `src/landing.ts`, `src/autopilot.ts`).
@@ -78,6 +86,15 @@ node tools/eval-scorer.mjs <outDir>/results.json
 ```
 
 Debug hooks live on `window.__shadowplay`.
+
+## Checks
+
+`.github/workflows/checks.yml` builds the site, poses every puppet in the
+emulator under headless Chromium, and runs `tools/eval-scorer.mjs --check`. The
+check fails if, with the game's own threshold and margin, any puppet's shape
+passes as another, or fewer than 90% of jittered correct poses pass.
+`tools/pose-preview.mjs` takes screenshots of each puppet (target, matched,
+alive) for tuning.
 
 ## Deploy
 

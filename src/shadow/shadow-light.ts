@@ -43,7 +43,8 @@ export interface ShadowTimings {
  */
 export class ShadowLight {
   readonly cam = new PerspectiveCamera();
-  readonly casterMaterial = new MeshBasicMaterial({ color: 0xffffff, side: DoubleSide });
+  /** Hands cast into red (scored); the forearm casts into green (display only). */
+  readonly casterMaterial = new MeshBasicMaterial({ color: 0xff0000, side: DoubleSide });
   readonly liveScene = new Scene();
   readonly ghostScene = new Scene();
 

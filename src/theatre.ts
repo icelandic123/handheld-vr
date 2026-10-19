@@ -18,12 +18,14 @@ import {
   SpotLight,
   Vector2,
   Vector3,
+  Vector4,
   VisibilityState,
   WebGLRenderTarget,
 } from '@iwsdk/core';
 import { TheatreAudio } from './audio.js';
 import { FONT, INK, INK_SOFT, TextBand, wrapText } from './hud.js';
-import { createScreenMaterial } from './screen-material.js';
+import { createScreenMaterial, MAX_EYES } from './screen-material.js';
+import { drawSketchCard } from './sketches.js';
 import { HandProxy } from './shadow/hand-proxy.js';
 import {
   applyRoot,
@@ -61,6 +63,9 @@ export const STAGE = {
   shoulderL: new Vector3(-0.19, -0.27, 0.08),
   shoulderR: new Vector3(0.19, -0.27, 0.08),
 };
+
+/** How long a puppet performs after the player lands its shape. */
+export const ALIVE_SECONDS = 6;
 
 const params = new URLSearchParams(location.search);
 const NATIVE_SHADOWS = params.get('native') === '1';
@@ -118,6 +123,14 @@ export class TheatreSystem extends createSystem({}) {
   private screenShader: ShaderMaterial | null = null;
   private title!: TextBand;
   private footer!: TextBand;
+  /** Ink drawing of the character the player is making. */
+  private card!: TextBand;
+  /** "Woof!" when a puppet comes alive. */
+  private callout!: TextBand;
+  /** Eyes of the posed ghosts this frame: (u, v, radius m, unused). */
+  private readonly eyes: Vector4[] = Array.from({ length: MAX_EYES }, () => new Vector4());
+  private eyeCount = 0;
+  private readonly eyeShift = new Vector2();
   private bulb!: Mesh<SphereGeometry, MeshBasicMaterial>;
   private glow!: PointLight;
   readonly audio = new TheatreAudio();
@@ -152,7 +165,8 @@ export class TheatreSystem extends createSystem({}) {
   smoothScore = 0;
   smoothRunner = 0;
   runnerId = '';
-  threshold = 0.85;
+  /** Forgiving on purpose: thresholds are not yet tuned on a real headset. */
+  threshold = 0.8;
   margin = 0.03;
   /** Score every Nth frame (3 = ~24 Hz at 72 fps). */
   scoreEvery = 3;
@@ -271,6 +285,13 @@ export class TheatreSystem extends createSystem({}) {
     this.footer = new TextBand(w * 0.96, 0.1);
     this.footer.mesh.position.set(c.x, c.y - h / 2 + 0.065, c.z + 0.003);
     stage.add(this.footer.mesh);
+    this.card = new TextBand(0.26, 0.24, 384);
+    this.card.mesh.position.set(c.x - w / 2 + 0.17, c.y + h / 2 - 0.37, c.z + 0.003);
+    stage.add(this.card.mesh);
+    this.callout = new TextBand(0.3, 0.12, 512);
+    this.callout.mesh.visible = false;
+    this.callout.mesh.renderOrder = 3;
+    stage.add(this.callout.mesh);
 
     const table = new Mesh(
       new BoxGeometry(1.1, 0.04, 0.7),
@@ -341,7 +362,12 @@ export class TheatreSystem extends createSystem({}) {
   private attachScreenShader(): void {
     if (NATIVE_SHADOWS || this.screenShader) return;
     const rt = this.light.displayRT;
-    this.screenShader = createScreenMaterial(rt.texture, this.light.targetDisplayRT.texture, new Vector2(1 / rt.width, 1 / rt.height));
+    this.screenShader = createScreenMaterial(
+      rt.texture,
+      this.light.targetDisplayRT.texture,
+      new Vector2(1 / rt.width, 1 / rt.height),
+      new Vector2(STAGE.screenW, STAGE.screenH),
+    );
     this.screenMesh.material = this.screenShader;
   }
 
@@ -450,6 +476,7 @@ export class TheatreSystem extends createSystem({}) {
   /** Pose the ghost pool (stage-local) for a set of actors. */
   private poseGhosts(actors: GhostActor[]): void {
     let k = 0;
+    this.eyeCount = 0;
     for (const a of actors) {
       for (const h of HANDS) {
         const placed = a.puppet.hands[h];
@@ -463,6 +490,15 @@ export class TheatreSystem extends createSystem({}) {
         this.tmpM.elements[12] += a.dx;
         rootFromWrist(this.tmpM, this.ghostLocal, this.tmpM2);
         applyRoot(this.tmpM2, this.ghostLocal, this.ghostWorld);
+        const eye = a.puppet.eye;
+        if (eye && eye.hand === h && this.eyeCount < MAX_EYES) {
+          this.tmpM.fromArray(this.ghostWorld, eye.joint * 16);
+          this.tmpV.set(eye.offset[0], eye.offset[1], eye.offset[2]).multiplyScalar(this.handScale * a.scale);
+          this.tmpV.applyMatrix4(this.tmpM);
+          this.projectToScreen(this.tmpV, this.eyes[this.eyeCount]);
+          this.eyes[this.eyeCount].z = eye.r * a.scale;
+          this.eyeCount++;
+        }
         g.setFromMatrices(this.ghostWorld, this.ghostRadii);
         this.estimateElbow(g.joints[J.wrist], h, g.elbow);
         g.hasForearm = true;
@@ -472,6 +508,15 @@ export class TheatreSystem extends createSystem({}) {
       }
     }
     for (; k < this.ghosts.length; k++) this.ghosts[k].setTracked(false, false);
+  }
+
+  /** Where the lamp throws a stage-local point onto the screen, as screen UV. */
+  private projectToScreen(p: Vector3, out: Vector4): void {
+    const L = STAGE.light;
+    const c = STAGE.screenCenter;
+    const t = (c.z - L.z) / Math.min(-1e-4, p.z - L.z);
+    out.x = (L.x + (p.x - L.x) * t - (c.x - STAGE.screenW / 2)) / STAGE.screenW;
+    out.y = (L.y + (p.y - L.y) * t - (c.y - STAGE.screenH / 2)) / STAGE.screenH;
   }
 
   /** Render every puppet's scored silhouette once and read the masks back. */
@@ -608,7 +653,7 @@ export class TheatreSystem extends createSystem({}) {
         if (s.cue === 'lamp') this.lampTarget = 1;
       }
     } else if (this.phase === 'alive') {
-      if (this.phaseTime > 4.5) this.nextScene();
+      if (this.phaseTime > ALIVE_SECONDS) this.nextScene();
     } else if (this.phase === 'bow') {
       if (this.passing && this.phaseTime > 3) this.holdTime += dt;
       else this.holdTime = Math.max(0, this.holdTime - dt * 2);
@@ -641,6 +686,31 @@ export class TheatreSystem extends createSystem({}) {
     u.uMatch.value = this.phase === 'alive' ? 1 : Math.max(0, (this.smoothScore - 0.4) / (this.threshold - 0.4));
     u.uAlive.value = alive ? Math.min(1, this.phaseTime * 3) : 0;
     u.uTargetAlpha.value = this.phase === 'playing' ? Math.min(1, this.phaseTime / 1.5) : this.phase === 'closed' ? 0 : 1;
+
+    // Eyes: hinted in ink while playing, opened in the shadow once alive, and
+    // they blink now and then.
+    const eyes = u.uEyes.value as Vector4[];
+    for (let i = 0; i < MAX_EYES; i++) {
+      const e = this.eyes[i];
+      if (i < this.eyeCount) eyes[i].set(e.x, e.y, e.z, blink(this.elapsed + i * 1.37));
+      else eyes[i].set(0, 0, 0, 0);
+    }
+    const playing = this.phase === 'playing';
+    u.uEyeInk.value = playing ? u.uTargetAlpha.value * (1 - this.smoothScore) : 0;
+    u.uEyeHole.value = alive ? u.uAlive.value : 0;
+    // The player's own shadow opens its eye as it nears the shape.
+    const sx = -this.result.dx / this.light.scoreW;
+    const sy = -this.result.dy / this.light.scoreH;
+    this.eyeShift.x += (-sx - this.eyeShift.x) * Math.min(1, dt * 8);
+    this.eyeShift.y += (-sy - this.eyeShift.y) * Math.min(1, dt * 8);
+    (u.uEyeShift.value as Vector2).copy(this.eyeShift);
+    const near = Math.min(1, Math.max(0, (this.smoothScore - 0.6) / Math.max(0.05, this.threshold - 0.6)));
+    u.uLiveEye.value = playing ? near : 0;
+    const s = this.act;
+    const moonScene = s.kind === 'puppet' && s.puppet === 'rabbit';
+    const moon = u.uMoon.value as Vector3;
+    const moonTarget = moonScene ? (this.phase === 'alive' ? 1 : 0.45) : 0;
+    moon.z += (moonTarget - moon.z) * Math.min(1, dt * 1.5);
   }
 
   private kickReadback(targetId: string): void {
@@ -795,6 +865,14 @@ export class TheatreSystem extends createSystem({}) {
       lines.slice(0, 2).forEach((l, i) => ctx.fillText(l, w / 2, h * (0.62 + i * 0.22)));
     });
 
+    // The character card: what this hand shape is meant to become.
+    const cardPuppet = this.phase === 'playing' || this.phase === 'alive' ? pup : null;
+    this.card.mesh.visible = cardPuppet != null;
+    if (cardPuppet) {
+      this.card.draw(cardPuppet.id, (ctx, w, h) => drawSketchCard(ctx, w, h, cardPuppet.id, cardPuppet.caption, INK, FONT));
+    }
+    this.drawCallout(pup);
+
     const pct = Math.round(this.smoothScore * 50) * 2;
     const anyHand = this.tracked.left || this.tracked.right;
     let status = '';
@@ -825,6 +903,34 @@ export class TheatreSystem extends createSystem({}) {
       ctx.font = `${Math.round(h * 0.28)}px ${FONT}`;
       const lines = wrapText(ctx, status, w * 0.66);
       lines.slice(0, 2).forEach((l, i) => ctx.fillText(l, w * 0.62, h * (lines.length > 1 ? 0.42 + i * 0.36 : 0.6)));
+    });
+  }
+
+  /** Pop a "Woof!" next to the puppet's head while it is alive. */
+  private drawCallout(pup: PuppetPose | null): void {
+    const say = pup?.say;
+    const t = this.phaseTime - 0.35;
+    const show = this.phase === 'alive' && say != null && this.eyeCount > 0 && t > 0;
+    this.callout.mesh.visible = show;
+    if (!show || !say) return;
+    const e = this.eyes[0];
+    const c = STAGE.screenCenter;
+    const left = c.x - STAGE.screenW / 2;
+    const bottom = c.y - STAGE.screenH / 2;
+    const x = Math.min(left + STAGE.screenW - 0.17, Math.max(left + 0.17, left + e.x * STAGE.screenW + say.dx));
+    const y = Math.min(bottom + STAGE.screenH - 0.3, Math.max(bottom + 0.15, bottom + e.y * STAGE.screenH + say.dy));
+    this.callout.mesh.position.set(x, y + Math.sin(t * 5) * 0.004, c.z + 0.004);
+    this.callout.mesh.scale.setScalar(Math.max(0.01, easeOutBack(Math.min(1, t * 3.5))));
+    this.callout.draw(say.text, (ctx, w, h) => {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `bold italic ${Math.round(h * 0.62)}px ${FONT}`;
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = h * 0.14;
+      ctx.strokeStyle = 'rgba(255, 232, 196, 0.95)';
+      ctx.strokeText(say.text, w / 2, h / 2);
+      ctx.fillStyle = INK;
+      ctx.fillText(say.text, w / 2, h / 2);
     });
   }
 
@@ -869,6 +975,12 @@ export class TheatreSystem extends createSystem({}) {
       puppets: PUPPETS.map((p) => p.id),
       scenes: SCENES.map((s) => (s.kind === 'puppet' ? s.puppet : 'curtain')),
       setScene: (i: number) => this.startScene(i),
+      /** Jump straight to a phase (e.g. 'alive') to preview an animation. */
+      setPhase: (p: Phase) => {
+        this.phase = p;
+        this.phaseTime = 0;
+        this.targetDisplayDirty = true;
+      },
       setBeat: (i: number) => this.startScene(i),
       next: () => this.nextScene(),
       recenter: () => this.recenter(),
@@ -917,6 +1029,18 @@ export class TheatreSystem extends createSystem({}) {
 }
 
 /** Puppet-specific "alive" animation: tweak the shape over time. */
+/** Eye openness over time: open, with a quick blink every few seconds. */
+function blink(t: number): number {
+  const k = (t % 3.4) / 0.16;
+  return k < 1 ? Math.abs(Math.cos(k * Math.PI)) : 1;
+}
+
+function easeOutBack(x: number): number {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
+}
+
 function animateShape(id: string, s: HandShape, t: number): HandShape {
   const osc = Math.sin(t * 9) * 0.5 + 0.5;
   switch (id) {

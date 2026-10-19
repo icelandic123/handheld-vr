@@ -1,0 +1,50 @@
+name: Checks
+
+# Builds the site, plays every puppet in the IWER emulator under headless
+# Chromium, and fails if any puppet's shape can pass as another one
+# (the look-alike check) with the game's own threshold and margin.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lookalike:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+        env:
+          NODE_ENV: production
+      - name: Install Playwright 1.56.1 and Chromium (outside the project)
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Pose every puppet in the emulator
+        run: |
+          python3 -m http.server 4173 --directory dist >/dev/null 2>&1 &
+          sleep 2
+          export PW_DIR="$RUNNER_TEMP/pw"
+          export CHROME="$(cd "$PW_DIR" && node -e "console.log(require('playwright').chromium.executablePath())")"
+          node tools/xr-proof.mjs "http://localhost:4173/" proof "?nolanding&emulator=1"
+      - name: Look-alike check
+        run: node tools/eval-scorer.mjs proof/results.json --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulator-proof
+          path: proof
+          retention-days: 14

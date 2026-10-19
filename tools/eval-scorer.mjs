@@ -1,10 +1,20 @@
 // Offline scorer evaluation on masks exported by tools/xr-proof.mjs.
-// Usage: node tools/eval-scorer.mjs <results.json>
+// Usage: node tools/eval-scorer.mjs <results.json> [--check]
+//
+// --check is the look-alike gate used in CI: with the game's own threshold and
+// margin (read from src/theatre.ts), no puppet's pose may pass as another
+// puppet, and nearly every jittered correct pose (up to 20 degrees) must pass.
 import { readFileSync } from 'node:fs';
 import { build } from 'esbuild';
 const res = await build({ entryPoints: [new URL('../src/shadow/score.ts', import.meta.url).pathname], bundle: true, format: 'esm', write: false, platform: 'node' });
 const { SilhouetteScorer } = await import('data:text/javascript;base64,' + Buffer.from(res.outputFiles[0].text).toString('base64'));
 const data = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const CHECK = process.argv.includes('--check');
+const theatreSrc = readFileSync(new URL('../src/theatre.ts', import.meta.url), 'utf8');
+const GAME_THRESHOLD = Number(/\bthreshold = ([0-9.]+);/u.exec(theatreSrc)?.[1]);
+const GAME_MARGIN = Number(/\bmargin = ([0-9.]+);/u.exec(theatreSrc)?.[1]);
+if (!(GAME_THRESHOLD > 0) || !(GAME_MARGIN >= 0)) throw new Error('Could not read threshold/margin from src/theatre.ts');
+const MIN_CORRECT_RATE = 0.9;
 const { w, h, targets, attempts } = data.masks;
 const toArr = (s) => Uint8Array.from(s, (c) => (c === '1' ? 255 : 0));
 const ids = Object.keys(targets);
@@ -46,7 +56,8 @@ console.log(`\nscore() on ${w}x${h} RGBA: ${(per * 1000).toFixed(1)} us/call (No
 // Pass rule used in the game: score >= threshold AND score beats every other
 // puppet's silhouette (the "runner-up") by at least `margin`.
 const scorers = Object.fromEntries(ids.map((id) => { const s = new SilhouetteScorer(w, h, { tolerancePx: 1 }); s.setTarget(toArr(targets[id]), 1); return [id, s]; }));
-for (const [threshold, margin] of [[0.85, 0], [0.85, 0.03], [0.85, 0.05], [0.8, 0.05]]) {
+let gate = null;
+for (const [threshold, margin] of [[GAME_THRESHOLD, GAME_MARGIN], [0.85, 0], [0.85, 0.03], [0.8, 0], [0.8, 0.05]]) {
   let tp = 0, tn = 0, fp = 0, fn = 0;
   const fpList = [];
   for (const tid of ids) {
@@ -63,5 +74,19 @@ for (const [threshold, margin] of [[0.85, 0], [0.85, 0.03], [0.85, 0.05], [0.8, 
       }
     }
   }
-  console.log(`rule thr=${threshold} margin=${margin}: correct poses accepted ${tp}/${tp + fn}, wrong poses accepted ${fp}/${fp + tn} ${fpList.slice(0, 6).join(' ')}`);
+  const tag = gate ? '' : ' (game)';
+  console.log(`rule thr=${threshold} margin=${margin}${tag}: correct poses accepted ${tp}/${tp + fn}, wrong poses accepted ${fp}/${fp + tn} ${fpList.slice(0, 6).join(' ')}`);
+  gate ??= { tp, fn, fp, fpList };
+}
+
+if (CHECK) {
+  const rate = gate.tp / (gate.tp + gate.fn);
+  const problems = [];
+  if (gate.fp > 0) problems.push(`look-alikes pass as each other: ${gate.fpList.join(', ')}`);
+  if (rate < MIN_CORRECT_RATE) problems.push(`only ${(rate * 100).toFixed(0)}% of correct poses pass (need ${MIN_CORRECT_RATE * 100}%)`);
+  if (problems.length) {
+    console.error(`\nLOOK-ALIKE CHECK FAILED (threshold ${GAME_THRESHOLD}, margin ${GAME_MARGIN}):\n- ${problems.join('\n- ')}`);
+    process.exit(1);
+  }
+  console.log(`\nLook-alike check passed: threshold ${GAME_THRESHOLD}, margin ${GAME_MARGIN}, ${(rate * 100).toFixed(0)}% of correct poses pass, no look-alike passes.`);
 }

@@ -21,6 +21,21 @@ interface EmuDevice {
 /** IWER shares one pose table between both hands, so each hand needs its own slot. */
 const POSE_SLOT = { left: 'autopilot-left', right: 'autopilot-right' } as const;
 
+/**
+ * What the watch-mode performer tries first in each scene before getting it
+ * right, so a viewer sees the shadow searching for the shape (and, for the
+ * rabbit, the look-alike warning) instead of an instant pass.
+ */
+const FIRST_TRY: Record<string, { id: string; amount: number }> = {
+  hello: { id: 'hello', amount: 0.3 },
+  dog: { id: 'dog', amount: 0.25 },
+  rabbit: { id: 'hello', amount: 1 },
+  bird: { id: 'bird', amount: 0.3 },
+};
+/** Seconds of each act: resting while the narration is read, then the first try. */
+const REST_UNTIL = 3;
+const FIRST_TRY_UNTIL = 8.5;
+
 export class Autopilot {
   /** 'watch' runs the whole play; 'snap' holds whatever puppet was requested. */
   mode: 'off' | 'watch' | 'snap' = 'off';
@@ -40,33 +55,43 @@ export class Autopilot {
     this.requested = id;
   }
 
+  /** The shape the performer is going for right now, and how far. */
+  private wanted(): { id: string | null; amount: number; sway: number } {
+    if (this.mode === 'snap') return { id: this.requested, amount: 1, sway: 0 };
+    const th = this.theatre;
+    const s = th.act;
+    const t = th.phaseTime;
+    if (th.phase === 'playing' && s.kind === 'puppet') {
+      if (t < REST_UNTIL) return { id: null, amount: 0, sway: 0 };
+      if (t < FIRST_TRY_UNTIL) {
+        const first = FIRST_TRY[s.puppet] ?? { id: s.puppet, amount: 1 };
+        return { ...first, sway: 0 };
+      }
+      return { id: s.puppet, amount: 1, sway: 0 };
+    }
+    if (th.phase === 'alive') return { id: this.current, amount: 1, sway: 0 };
+    if (th.phase === 'bow' && t > 4.5) return { id: 'hello', amount: 1, sway: 1 };
+    return { id: null, amount: 0, sway: 0 };
+  }
+
   update(dt: number): void {
     const dev = this.device;
     if (this.mode === 'off' || !dev) return;
-    const th = this.theatre;
-    let want: string | null = this.requested;
-    let sway = 0;
-    if (this.mode === 'watch') {
-      want = null;
-      const s = th.act;
-      if (th.phase === 'playing' && s.kind === 'puppet' && th.phaseTime > 1.6) want = s.puppet;
-      else if (th.phase === 'alive') want = this.current;
-      else if (th.phase === 'bow' && th.phaseTime > 4.5) {
-        want = 'hello';
-        sway = 1;
-      }
-    }
-    if (want !== this.current) {
+    const want = this.wanted();
+    if (want.id !== this.current) {
+      // Lower the hands before changing shape.
       this.blend -= dt / 0.7;
       if (this.blend <= 0) {
         this.blend = 0;
-        this.current = want;
+        this.current = want.id;
       }
-    } else if (want) {
-      this.blend = Math.min(1, this.blend + dt / 2.0);
+    } else if (want.id) {
+      const step = dt / 2.2;
+      this.blend += Math.max(-step, Math.min(step, want.amount - this.blend));
     }
-    const t = this.blend * this.blend * (3 - 2 * this.blend);
-    this.apply(dev, th.emulatorPlacement(this.current, t, sway * t));
+    const b = Math.max(0, Math.min(1, this.blend));
+    const t = b * b * (3 - 2 * b);
+    this.apply(dev, this.theatre.emulatorPlacement(this.current, t, want.sway * t));
   }
 
   private apply(dev: EmuDevice, placement: Record<'left' | 'right', EmulatorHand>): void {
